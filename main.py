@@ -9,6 +9,11 @@ import asyncio
 import pyshorteners
 import time
 from pymongo import MongoClient
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Telegram bot token and channel ID
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -32,33 +37,37 @@ session = requests.Session()
 retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504])
 session.mount('https://', HTTPAdapter(max_retries=retries))
 
-# Function to make requests with error handling
 def make_request(url):
+    logger.info(f"Attempting to make request to {url}")
     try:
         response = session.get(url, timeout=30)
         response.raise_for_status()
+        logger.info(f"Successfully made request to {url}")
         return response
     except requests.exceptions.SSLError as ssl_err:
-        print(f"SSL Error when accessing {url}: {ssl_err}")
-        print("Please check the SSL certificate of the website.")
+        logger.error(f"SSL Error when accessing {url}: {ssl_err}")
         return None
     except requests.exceptions.RequestException as e:
-        print(f"Error accessing {url}: {e}")
+        logger.error(f"Error accessing {url}: {e}")
         return None
 
-# Function to send a message to Telegram
 async def send_to_telegram(message, file=None):
+    logger.info("Attempting to send message to Telegram")
     bot = Bot(token=BOT_TOKEN)
     
-    if file:
-        async with bot:
-            await bot.send_document(chat_id=CHANNEL_ID, document=open(file, 'rb'), caption=message)
-    else:
-        async with bot:
-            await bot.send_message(chat_id=CHANNEL_ID, text=message)
+    try:
+        if file:
+            async with bot:
+                await bot.send_document(chat_id=CHANNEL_ID, document=open(file, 'rb'), caption=message)
+        else:
+            async with bot:
+                await bot.send_message(chat_id=CHANNEL_ID, text=message)
+        logger.info("Successfully sent message to Telegram")
+    except Exception as e:
+        logger.error(f"Error sending message to Telegram: {e}")
 
-# Function to download and verify file
 def download_and_verify_file(url):
+    logger.info(f"Attempting to download file from {url}")
     try:
         response = make_request(url)
         if response is None:
@@ -84,47 +93,46 @@ def download_and_verify_file(url):
                 if chunk:
                     file.write(chunk)
         
-        # Verify file integrity
         if os.path.getsize(filename) > 0:
-            print(f"File downloaded and verified: {filename}")
+            logger.info(f"File downloaded and verified: {filename}")
             return filename
         else:
-            print(f"Downloaded file is empty: {filename}")
+            logger.warning(f"Downloaded file is empty: {filename}")
             os.remove(filename)
             return None
 
     except Exception as e:
-        print(f"Error downloading file from {url}: {e}")
+        logger.error(f"Error downloading file from {url}: {e}")
         return None
 
-# Shorten URLs with delay
 def shorten_url(url):
-    time.sleep(2)  # Add delay for URL shortening
+    logger.info(f"Attempting to shorten URL: {url}")
+    time.sleep(2)
     try:
-        return shortener.tinyurl.short(url)
+        short_url = shortener.tinyurl.short(url)
+        logger.info(f"Successfully shortened URL: {url} to {short_url}")
+        return short_url
     except Exception as e:
-        print(f"URL shortening failed for {url}: {e}")
+        logger.error(f"URL shortening failed for {url}: {e}")
         return url
 
-# Fetch and display URLs from marugujarat.in
 def fetch_urls():
+    logger.info("Fetching URLs from marugujarat.in")
     base_url = 'https://www.marugujarat.in/'
     response = make_request(base_url)
     if response is None:
+        logger.error("Failed to fetch URLs from marugujarat.in")
         return []
     
     soup = BeautifulSoup(response.content, 'html.parser')
     links = soup.find_all('a', class_='_self cvplbd')
     
-    urls = []
-    for link in links:
-        url = urljoin(base_url, link['href'])
-        urls.append(url)
-    
+    urls = [urljoin(base_url, link['href']) for link in links]
+    logger.info(f"Found {len(urls)} URLs")
     return urls
 
-# Scrape the selected URL
 def scrape_selected_url(url):
+    logger.info(f"Scraping URL: {url}")
     response = make_request(url)
     if response is None:
         return None, None
@@ -133,7 +141,7 @@ def scrape_selected_url(url):
     
     title_tag = soup.find('h1', class_='entry-title')
     if title_tag is None:
-        print(f"Error: Unable to find the job title on the page: {url}")
+        logger.error(f"Unable to find the job title on the page: {url}")
         return None, None
     
     title = title_tag.text.strip()
@@ -147,14 +155,15 @@ def scrape_selected_url(url):
             if any(keyword in text for keyword in ['Job Advertisement', 'Official website', 'Apply Online', 'Job Notification']):
                 job_details[text] = link['href']
     
+    logger.info(f"Successfully scraped URL: {url}")
     return title, job_details
 
-# Handle files and send to Telegram
 async def handle_files_and_send_to_telegram(title, job_details):
     if title is None:
-        print("Skipping due to missing title.")
+        logger.warning("Skipping due to missing title.")
         return
     
+    logger.info(f"Handling files and sending to Telegram for job: {title}")
     message = f"📢 {title} 📢\n\n"
     
     job_notification_file = None
@@ -192,45 +201,47 @@ async def handle_files_and_send_to_telegram(title, job_details):
         await send_to_telegram(message)
 
 def is_url_scraped(url):
-    return collection.find_one({"url": url}) is not None
+    result = collection.find_one({"url": url}) is not None
+    logger.info(f"Checking if URL is scraped: {url} - Result: {result}")
+    return result
 
 def mark_url_as_scraped(url, title):
+    logger.info(f"Marking URL as scraped: {url}")
     collection.insert_one({"url": url, "title": title, "scraped_at": time.time()})
 
 async def scrape_and_send(url):
     if is_url_scraped(url):
-        print(f"URL already scraped: {url}")
+        logger.info(f"URL already scraped: {url}")
         return
 
+    logger.info(f"Scraping and sending for URL: {url}")
     title, job_details = scrape_selected_url(url)
     if title:
         await handle_files_and_send_to_telegram(title, job_details)
         mark_url_as_scraped(url, title)
     else:
-        print(f"Failed to scrape URL: {url}")
+        logger.error(f"Failed to scrape URL: {url}")
 
-# Function to get unscraped URLs
 def get_unscraped_urls(urls):
-    unscraped = []
-    for url in urls:
-        if not is_url_scraped(url):
-            unscraped.append(url)
+    unscraped = [url for url in urls if not is_url_scraped(url)]
+    logger.info(f"Found {len(unscraped)} unscraped URLs out of {len(urls)} total URLs")
     return unscraped
 
-# Main function
 async def main():
+    logger.info("Starting main function")
     urls = fetch_urls()
     unscraped_urls = get_unscraped_urls(urls)
     
-    print(f"Found {len(unscraped_urls)} unscraped URLs.")
+    logger.info(f"Found {len(unscraped_urls)} unscraped URLs.")
     
     for i, url in enumerate(unscraped_urls, 1):
-        print(f"Scraping URL {i}/{len(unscraped_urls)}: {url}")
+        logger.info(f"Scraping URL {i}/{len(unscraped_urls)}: {url}")
         await scrape_and_send(url)
-        time.sleep(10)  # 10-second delay between scrapes
+        time.sleep(10)
     
-    print("Finished scraping all new URLs.")
+    logger.info("Finished scraping all new URLs.")
 
-# Run the async main function
 if __name__ == '__main__':
+    logger.info("Script started")
     asyncio.run(main())
+    logger.info("Script completed")
