@@ -243,17 +243,18 @@ async def scrape_and_send(url, timeout=120):
 
     logger.info(f"Scraping and sending for URL: {url}")
     try:
-        async with asyncio.timeout(timeout):
-            title, job_details = scrape_selected_url(url)
-            if title:
-                await handle_files_and_send_to_telegram(title, job_details)
-                mark_url_as_scraped(url, title)
-            else:
-                logger.error(f"Failed to scrape URL: {url}")
+        await asyncio.wait_for(scrape_selected_url(url), timeout=timeout)
+        title, job_details = scrape_selected_url(url)
+        if title:
+            await handle_files_and_send_to_telegram(title, job_details)
+            mark_url_as_scraped(url, title)
+        else:
+            logger.error(f"Failed to scrape URL: {url}")
     except asyncio.TimeoutError:
         logger.error(f"Timeout occurred while processing URL: {url}")
     except Exception as e:
         logger.error(f"Error occurred while processing URL {url}: {e}")
+
 
 def get_unscraped_urls(urls):
     unscraped = [url for url in urls if not is_url_scraped(url)]
