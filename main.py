@@ -154,20 +154,19 @@ def fetch_urls():
     logger.info(f"Found {len(urls)} URLs")
     return urls
 
-def scrape_selected_url(url):
+async def scrape_selected_url(url):
     logger.info(f"Scraping URL: {url}")
-    response = make_request(url)
+    response = await asyncio.to_thread(make_request, url)
     if response is None:
         logger.warning(f"Failed to scrape URL: {url}")
         return None, None
-    
+
     soup = BeautifulSoup(response.content, 'html.parser')
-    
     title_tag = soup.find('h1', class_='entry-title')
     if title_tag is None:
         logger.error(f"Unable to find the job title on the page: {url}")
         return None, None
-    
+
     title = title_tag.text.strip()
     
     job_details = {}
@@ -207,7 +206,7 @@ async def handle_files_and_send_to_telegram(title, job_details):
         else:
             message += f"🔗 {key}: {short_url}\n"
         
-        file_path = download_and_verify_file(url)
+        file_path = await asyncio.to_thread(download_and_verify_file, url)
         if file_path:
             if 'Job Notification' in key:
                 job_notification_file = file_path
@@ -226,7 +225,7 @@ async def handle_files_and_send_to_telegram(title, job_details):
     else:
         logger.warning("No files to send, sending message only")
         await send_to_telegram(message)
-
+        
 def is_url_scraped(url):
     result = collection.find_one({"url": url}) is not None
     logger.info(f"Checking if URL is scraped: {url} - Result: {result}")
@@ -243,8 +242,7 @@ async def scrape_and_send(url, timeout=120):
 
     logger.info(f"Scraping and sending for URL: {url}")
     try:
-        await asyncio.wait_for(scrape_selected_url(url), timeout=timeout)
-        title, job_details = scrape_selected_url(url)
+        title, job_details = await asyncio.wait_for(scrape_selected_url(url), timeout=timeout)
         if title:
             await handle_files_and_send_to_telegram(title, job_details)
             mark_url_as_scraped(url, title)
@@ -254,7 +252,6 @@ async def scrape_and_send(url, timeout=120):
         logger.error(f"Timeout occurred while processing URL: {url}")
     except Exception as e:
         logger.error(f"Error occurred while processing URL {url}: {e}")
-
 
 def get_unscraped_urls(urls):
     unscraped = [url for url in urls if not is_url_scraped(url)]
