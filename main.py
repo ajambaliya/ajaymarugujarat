@@ -1,4 +1,6 @@
 import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import os
 from urllib.parse import urljoin, urlparse
@@ -7,9 +9,6 @@ import asyncio
 import pyshorteners
 import time
 from pymongo import MongoClient
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Telegram bot token and channel ID
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -28,6 +27,25 @@ client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 collection = db[COLLECTION_NAME]
 
+# Create a session with retry strategy
+session = requests.Session()
+retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504])
+session.mount('https://', HTTPAdapter(max_retries=retries))
+
+# Function to make requests with error handling
+def make_request(url):
+    try:
+        response = session.get(url, timeout=30)
+        response.raise_for_status()
+        return response
+    except requests.exceptions.SSLError as ssl_err:
+        print(f"SSL Error when accessing {url}: {ssl_err}")
+        print("Please check the SSL certificate of the website.")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error accessing {url}: {e}")
+        return None
+
 # Function to send a message to Telegram
 async def send_to_telegram(message, file=None):
     bot = Bot(token=BOT_TOKEN)
@@ -42,8 +60,9 @@ async def send_to_telegram(message, file=None):
 # Function to download and verify file
 def download_and_verify_file(url):
     try:
-        response = requests.get(url, stream=True, verify=False)
-        response.raise_for_status()
+        response = make_request(url)
+        if response is None:
+            return None
         
         content_type = response.headers.get('Content-Type')
         if 'pdf' in content_type:
@@ -74,17 +93,6 @@ def download_and_verify_file(url):
             os.remove(filename)
             return None
 
-    except requests.exceptions.SSLError as ssl_err:
-        print(f"SSL Error downloading file from {url}: {ssl_err}")
-        print("Attempting to proceed without verification (not recommended for production use)...")
-        try:
-            response = requests.get(url, stream=True, verify=False)
-            response.raise_for_status()
-            # Repeat the file saving process here...
-        except Exception as e:
-            print(f"Error downloading file from {url} without verification: {e}")
-            return None
-
     except Exception as e:
         print(f"Error downloading file from {url}: {e}")
         return None
@@ -101,9 +109,11 @@ def shorten_url(url):
 # Fetch and display URLs from marugujarat.in
 def fetch_urls():
     base_url = 'https://www.marugujarat.in/'
-    response = requests.get(base_url, verify=False)
-    soup = BeautifulSoup(response.content, 'html.parser')
+    response = make_request(base_url)
+    if response is None:
+        return []
     
+    soup = BeautifulSoup(response.content, 'html.parser')
     links = soup.find_all('a', class_='_self cvplbd')
     
     urls = []
@@ -115,7 +125,10 @@ def fetch_urls():
 
 # Scrape the selected URL
 def scrape_selected_url(url):
-    response = requests.get(url, verify=False)
+    response = make_request(url)
+    if response is None:
+        return None, None
+    
     soup = BeautifulSoup(response.content, 'html.parser')
     
     title_tag = soup.find('h1', class_='entry-title')
@@ -196,7 +209,7 @@ async def scrape_and_send(url):
     else:
         print(f"Failed to scrape URL: {url}")
 
-# New function to get unscraped URLs
+# Function to get unscraped URLs
 def get_unscraped_urls(urls):
     unscraped = []
     for url in urls:
@@ -204,7 +217,7 @@ def get_unscraped_urls(urls):
             unscraped.append(url)
     return unscraped
 
-# Modified main function
+# Main function
 async def main():
     urls = fetch_urls()
     unscraped_urls = get_unscraped_urls(urls)
