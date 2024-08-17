@@ -10,6 +10,8 @@ import pyshorteners
 import time
 from pymongo import MongoClient
 import logging
+import concurrent.futures
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -66,10 +68,17 @@ async def send_to_telegram(message, file=None):
     except Exception as e:
         logger.error(f"Error sending message to Telegram: {e}")
 
-def download_and_verify_file(url):
+def download_and_verify_file(url, timeout=30):
     logger.info(f"Attempting to download file from {url}")
     try:
-        response = make_request(url)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(make_request, url)
+            try:
+                response = future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"Download timed out for {url}")
+                return None
+
         if response is None:
             return None
         
@@ -189,6 +198,8 @@ async def handle_files_and_send_to_telegram(title, job_details):
                 job_notification_file = file_path
             else:
                 other_files.append(file_path)
+        else:
+            logger.warning(f"Failed to download file from {url}")
     
     promo_message = "\n🚀 આવી જ તમામ જોબ અપડેટ રેગ્યુલર કોઇ પણ એડ વગર જોવા માટે અમારા ચેનલમાં જોડાઇ જાવ ! 🚀\n👉 https://t.me/currentadda 👈"
     message += promo_message
@@ -198,8 +209,9 @@ async def handle_files_and_send_to_telegram(title, job_details):
     if file_to_send:
         await send_to_telegram(message, file=file_to_send)
     else:
+        logger.warning("No files to send, sending message only")
         await send_to_telegram(message)
-
+        
 def is_url_scraped(url):
     result = collection.find_one({"url": url}) is not None
     logger.info(f"Checking if URL is scraped: {url} - Result: {result}")
