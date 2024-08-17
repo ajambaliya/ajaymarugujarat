@@ -214,9 +214,10 @@ async def handle_files_and_send_to_telegram(title, job_details):
                 other_files.append(file_path)
         else:
             logger.warning(f"Failed to download file from {url}")
-    
-    promo_message = "\n🚀 આવી જ તમામ જોબ અપડેટ રેગ્યુલર કોઇ પણ એડ વગર જોવા માટે અમારા ચેનલમાં જોડાઇ જાવ ! 🚀\n👉 https://t.me/currentadda 👈"
-    message += promo_message
+
+    promo_message = "\n👉 ધણી વખત PDF મોક્લવામાં કરપ્ટ થઇ જતી હોઇ તો તમે ઉપર આપેલી જે તે લિંક પરથી સિધી Download કરી શકો છો. 👈"
+    promo_message_1 = "\n🚀 આવી જ તમામ જોબ અપડેટ રેગ્યુલર કોઇ પણ એડ વગર જોવા માટે અમારા ચેનલમાં જોડાઇ જાવ ! 🚀\n👉 https://t.me/currentadda 👈"
+    message += promo_message + promo_message_1
     
     file_to_send = job_notification_file if job_notification_file else (other_files[0] if other_files else None)
     
