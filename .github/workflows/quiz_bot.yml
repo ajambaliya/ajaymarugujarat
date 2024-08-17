@@ -1,4 +1,4 @@
-name: Marugujarat Job Scraper
+name: Scrape and Send
 
 on:
   push:
@@ -8,34 +8,30 @@ on:
 jobs:
   scrape-and-send:
     runs-on: ubuntu-latest
-    
     steps:
     - uses: actions/checkout@v2
     
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
-        python-version: 3.9
-
-    - name: Cache Python packages
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+        python-version: '3.9'
+    
+    - name: Update CA certificates
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ca-certificates
+        sudo update-ca-certificates
     
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install requests beautifulsoup4 python-telegram-bot pyshorteners pymongo
     
-    - name: Run the scraper script
+    - name: Run script
       env:
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         MONGO_URI: ${{ secrets.MONGO_URI }}
         DB_NAME: ${{ secrets.DB_NAME }}
         COLLECTION_NAME: ${{ secrets.COLLECTION_NAME }}
-      run: |
-        python main.py
+      run: python main.py
