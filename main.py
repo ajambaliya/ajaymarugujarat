@@ -16,7 +16,7 @@ CHANNEL_ID = os.getenv('CHANNEL_ID')
 shortener = pyshorteners.Shortener()
 
 # MongoDB configuration
-MONGO_URI = os.getenv('MONGO_URI')  # Replace with your MongoDB URI
+MONGO_URI = os.getenv('MONGO_URI')
 DB_NAME = os.getenv('DB_NAME')
 COLLECTION_NAME = os.getenv('COLLECTION_NAME')
 
@@ -104,9 +104,8 @@ def fetch_urls():
     links = soup.find_all('a', class_='_self cvplbd')
     
     urls = []
-    for i, link in enumerate(links, start=1):
+    for link in links:
         url = urljoin(base_url, link['href'])
-        print(f'{i}: {url}')
         urls.append(url)
     
     return urls
@@ -194,25 +193,27 @@ async def scrape_and_send(url):
     else:
         print(f"Failed to scrape URL: {url}")
 
-# Main script execution
+# New function to get unscraped URLs
+def get_unscraped_urls(urls):
+    unscraped = []
+    for url in urls:
+        if not is_url_scraped(url):
+            unscraped.append(url)
+    return unscraped
+
+# Modified main function
 async def main():
     urls = fetch_urls()
+    unscraped_urls = get_unscraped_urls(urls)
     
-    print("Available URLs:")
-    for i, url in enumerate(urls, start=1):
-        print(f"{i}: {url}")
+    print(f"Found {len(unscraped_urls)} unscraped URLs.")
     
-    while True:
-        try:
-            selected_index = int(input("Enter the number of the URL to scrape (0 to exit): ")) - 1
-            if selected_index == -1:
-                break
-            selected_url = urls[selected_index]
-            await scrape_and_send(selected_url)
-        except IndexError:
-            print("Invalid selection. Please try again.")
-        except ValueError:
-            print("Please enter a valid number.")
+    for i, url in enumerate(unscraped_urls, 1):
+        print(f"Scraping URL {i}/{len(unscraped_urls)}: {url}")
+        await scrape_and_send(url)
+        time.sleep(10)  # 10-second delay between scrapes
+    
+    print("Finished scraping all new URLs.")
 
 # Run the async main function
 if __name__ == '__main__':
