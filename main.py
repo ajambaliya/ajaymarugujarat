@@ -7,6 +7,9 @@ import asyncio
 import pyshorteners
 import time
 from pymongo import MongoClient
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Telegram bot token and channel ID
 BOT_TOKEN = os.getenv('BOT_TOKEN')
