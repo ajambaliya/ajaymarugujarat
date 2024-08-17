@@ -43,11 +43,11 @@ retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504])
 session.mount('https://', HTTPAdapter(max_retries=retries))
 session.verify = False  # This allows making unverified HTTPS requests when needed
 
-def make_request(url, verify=True, max_retries=3):
+def make_request(url, verify=True, max_retries=1):
     logger.info(f"Attempting to make request to {url} (verify={verify})")
     for attempt in range(max_retries):
         try:
-            response = session.get(url, timeout=30, verify=verify)
+            response = session.get(url, timeout=5, verify=verify)
             response.raise_for_status()
             logger.info(f"Successfully made request to {url}")
             return response
