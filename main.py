@@ -11,7 +11,10 @@ import time
 from pymongo import MongoClient
 import logging
 import concurrent.futures
+import urllib3
 
+# Disable InsecureRequestWarning
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,20 +41,30 @@ collection = db[COLLECTION_NAME]
 session = requests.Session()
 retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504])
 session.mount('https://', HTTPAdapter(max_retries=retries))
+session.verify = False  # This allows making unverified HTTPS requests when needed
 
-def make_request(url):
-    logger.info(f"Attempting to make request to {url}")
-    try:
-        response = session.get(url, timeout=30)
-        response.raise_for_status()
-        logger.info(f"Successfully made request to {url}")
-        return response
-    except requests.exceptions.SSLError as ssl_err:
-        logger.error(f"SSL Error when accessing {url}: {ssl_err}")
-        return None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error accessing {url}: {e}")
-        return None
+def make_request(url, verify=True, max_retries=3):
+    logger.info(f"Attempting to make request to {url} (verify={verify})")
+    for attempt in range(max_retries):
+        try:
+            response = session.get(url, timeout=30, verify=verify)
+            response.raise_for_status()
+            logger.info(f"Successfully made request to {url}")
+            return response
+        except requests.exceptions.SSLError as ssl_err:
+            if verify:
+                logger.warning(f"SSL Error when accessing {url} with verification. Retrying without verification.")
+                return make_request(url, verify=False, max_retries=max_retries-1)
+            else:
+                logger.error(f"SSL Error when accessing {url} without verification: {ssl_err}")
+                return None
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Error accessing {url} (attempt {attempt+1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                logger.error(f"Failed to access {url} after {max_retries} attempts")
+                return None
+            time.sleep(2 ** attempt)  # Exponential backoff
+    return None
 
 async def send_to_telegram(message, file=None):
     logger.info("Attempting to send message to Telegram")
@@ -80,6 +93,7 @@ def download_and_verify_file(url, timeout=30):
                 return None
 
         if response is None:
+            logger.warning(f"Failed to download file from {url}")
             return None
         
         content_type = response.headers.get('Content-Type')
@@ -144,6 +158,7 @@ def scrape_selected_url(url):
     logger.info(f"Scraping URL: {url}")
     response = make_request(url)
     if response is None:
+        logger.warning(f"Failed to scrape URL: {url}")
         return None, None
     
     soup = BeautifulSoup(response.content, 'html.parser')
@@ -211,7 +226,7 @@ async def handle_files_and_send_to_telegram(title, job_details):
     else:
         logger.warning("No files to send, sending message only")
         await send_to_telegram(message)
-        
+
 def is_url_scraped(url):
     result = collection.find_one({"url": url}) is not None
     logger.info(f"Checking if URL is scraped: {url} - Result: {result}")
@@ -221,18 +236,24 @@ def mark_url_as_scraped(url, title):
     logger.info(f"Marking URL as scraped: {url}")
     collection.insert_one({"url": url, "title": title, "scraped_at": time.time()})
 
-async def scrape_and_send(url):
+async def scrape_and_send(url, timeout=120):
     if is_url_scraped(url):
         logger.info(f"URL already scraped: {url}")
         return
 
     logger.info(f"Scraping and sending for URL: {url}")
-    title, job_details = scrape_selected_url(url)
-    if title:
-        await handle_files_and_send_to_telegram(title, job_details)
-        mark_url_as_scraped(url, title)
-    else:
-        logger.error(f"Failed to scrape URL: {url}")
+    try:
+        async with asyncio.timeout(timeout):
+            title, job_details = scrape_selected_url(url)
+            if title:
+                await handle_files_and_send_to_telegram(title, job_details)
+                mark_url_as_scraped(url, title)
+            else:
+                logger.error(f"Failed to scrape URL: {url}")
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout occurred while processing URL: {url}")
+    except Exception as e:
+        logger.error(f"Error occurred while processing URL {url}: {e}")
 
 def get_unscraped_urls(urls):
     unscraped = [url for url in urls if not is_url_scraped(url)]
@@ -241,19 +262,23 @@ def get_unscraped_urls(urls):
 
 async def main():
     logger.info("Starting main function")
-    urls = fetch_urls()
-    unscraped_urls = get_unscraped_urls(urls)
-    
-    logger.info(f"Found {len(unscraped_urls)} unscraped URLs.")
-    
-    for i, url in enumerate(unscraped_urls, 1):
-        logger.info(f"Scraping URL {i}/{len(unscraped_urls)}: {url}")
-        await scrape_and_send(url)
-        time.sleep(10)
-    
-    logger.info("Finished scraping all new URLs.")
+    try:
+        urls = fetch_urls()
+        unscraped_urls = get_unscraped_urls(urls)
+        
+        logger.info(f"Found {len(unscraped_urls)} unscraped URLs.")
+        
+        for i, url in enumerate(unscraped_urls, 1):
+            logger.info(f"Scraping URL {i}/{len(unscraped_urls)}: {url}")
+            await scrape_and_send(url)
+            time.sleep(10)
+        
+        logger.info("Finished scraping all new URLs.")
+    except Exception as e:
+        logger.error(f"An error occurred in the main function: {e}")
+    finally:
+        logger.info("Script completed")
 
 if __name__ == '__main__':
     logger.info("Script started")
     asyncio.run(main())
-    logger.info("Script completed")
